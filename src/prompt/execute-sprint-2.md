@@ -1,4 +1,4 @@
-# Sprint 1 Prompt
+# Sprint 2 Prompt
 
 ## Input(s):
 
