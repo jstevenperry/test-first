@@ -27,6 +27,7 @@ class ProductDropdownTests(unittest.TestCase):
             "configure": lambda self, **kwargs: setattr(self, "values", kwargs["values"]),
         })()
         app._product_skus = {}
+        app.customer_fields = {}
         app.customer_entry = type("Entry", (), {"get": lambda self: "Ada"})()
         app.quantity_entry = type("Entry", (), {"get": lambda self: "1"})()
         app.shipped_var = type("Variable", (), {"get": lambda self: False})()
@@ -69,6 +70,7 @@ class ProductDropdownTests(unittest.TestCase):
         with patch("generated.gui._request_json", side_effect=lambda *args: requests.append(args) or {}):
             HCCApplication.submit_order(app)
         self.assertEqual(requests[0][2]["items"][0]["product_sku"], "FIRST-SPROUT")
+        self.assertEqual(requests[0][2]["customer"], {})
 
     def test_inventory_refresh_failure_surfaces_status(self):
         app = self.make_app()

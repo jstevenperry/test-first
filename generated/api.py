@@ -44,7 +44,9 @@ def make_server(host="127.0.0.1", port=8000, database=None):
 
         def _route(self):
             path = self._path()
-            if path in ("/products", "/orders"):
+            if path in ("/products", "/orders", "/customers"):
+                return path, None
+            if path == "/customers/purchased":
                 return path, None
             match = re.fullmatch(r"/products/([^/]+)", path)
             if match:
@@ -84,6 +86,17 @@ def make_server(host="127.0.0.1", port=8000, database=None):
                     self._json(200, product)
             elif route == "/orders" and self.command == "GET":
                 self._json(200, db.list_orders())
+            elif route == "/customers" and self.command == "GET":
+                self._json(200, db.list_customers())
+            elif route == "/customers/purchased" and self.command == "GET":
+                self._json(200, db.list_purchased_customers())
+            elif route == "/customers" and self.command == "POST":
+                try:
+                    customer = db.create_customer(self._read_json())
+                except (ValueError, TypeError) as exc:
+                    self._error(400, str(exc))
+                    return
+                self._json(201, customer)
             elif route == "/orders/{id}" and self.command == "GET":
                 if not re.fullmatch(r"[0-9]+", parameter):
                     self._error(400, "order ID must be an integer")
@@ -127,6 +140,8 @@ def make_server(host="127.0.0.1", port=8000, database=None):
                     "/orders": "GET, POST",
                     "/orders/{id}": "GET",
                     "/orders/{id}/ship": "POST",
+                    "/customers": "GET, POST",
+                    "/customers/purchased": "GET",
                 }[route]
                 self._error(405, "Method not allowed", allow)
 

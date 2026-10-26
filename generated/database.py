@@ -14,6 +14,17 @@ SEED_PRODUCTS = (
     ("WINDOWSILL-JOURNAL", "Windowsill Notes Journal", "24.00", 30),
 )
 
+CUSTOMER_FIELDS = (
+    "full_name",
+    "street_address",
+    "city",
+    "state",
+    "postal_code",
+    "country",
+    "phone_country_code",
+    "phone_number",
+)
+
 
 class OrderNotShippable(Exception):
     pass
@@ -44,6 +55,17 @@ class Database:
         with self._lock, self.connection:
             self.connection.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS customers (
+                    customer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    full_name TEXT NOT NULL,
+                    street_address TEXT NOT NULL,
+                    city TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    postal_code TEXT NOT NULL,
+                    country TEXT NOT NULL,
+                    phone_country_code TEXT NOT NULL,
+                    phone_number TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS products (
                     sku TEXT PRIMARY KEY COLLATE BINARY,
                     name TEXT NOT NULL,
@@ -62,7 +84,8 @@ class Database:
                     total_cents INTEGER NOT NULL,
                     amount_paid_cents INTEGER NOT NULL,
                     amount_refunded_cents INTEGER NOT NULL,
-                    payment_status TEXT NOT NULL
+                    payment_status TEXT NOT NULL,
+                    customer_id INTEGER REFERENCES customers(customer_id)
                 );
                 CREATE TABLE IF NOT EXISTS order_items (
                     order_id INTEGER NOT NULL REFERENCES orders(order_id),
@@ -77,6 +100,13 @@ class Database:
                 );
                 """
             )
+            order_columns = {
+                row["name"] for row in self.connection.execute("PRAGMA table_info(orders)")
+            }
+            if "customer_id" not in order_columns:
+                self.connection.execute(
+                    "ALTER TABLE orders ADD COLUMN customer_id INTEGER REFERENCES customers(customer_id)"
+                )
             self.connection.executemany(
                 "INSERT OR IGNORE INTO products(sku, name, unit_price_cents, stock_quantity) VALUES (?, ?, ?, ?)",
                 [(sku, name, cents(price), stock) for sku, name, price, stock in SEED_PRODUCTS],
@@ -119,6 +149,60 @@ class Database:
         return None if row is None else self._product_dict(row)
 
     @staticmethod
+    def normalize_customer(customer):
+        if not isinstance(customer, dict):
+            raise ValueError("customer must be an object")
+        normalized = {}
+        for field in CUSTOMER_FIELDS:
+            value = customer.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{field} must be a non-empty string")
+            normalized[field] = value.strip()
+        return normalized
+
+    def create_customer(self, customer):
+        normalized = self.normalize_customer(customer)
+        columns = ", ".join(CUSTOMER_FIELDS)
+        placeholders = ", ".join("?" for _ in CUSTOMER_FIELDS)
+        with self._lock, self.connection:
+            cursor = self.connection.execute(
+                f"INSERT INTO customers({columns}) VALUES({placeholders})",
+                tuple(normalized[field] for field in CUSTOMER_FIELDS),
+            )
+            customer_id = cursor.lastrowid
+        return self.get_customer(customer_id)
+
+    def get_customer(self, customer_id):
+        with self._lock:
+            row = self.connection.execute(
+                "SELECT * FROM customers WHERE customer_id=?", (customer_id,)
+            ).fetchone()
+        return None if row is None else self._customer_dict(row)
+
+    def list_customers(self):
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT * FROM customers ORDER BY customer_id"
+            ).fetchall()
+        return [self._customer_dict(row) for row in rows]
+
+    def list_purchased_customers(self):
+        with self._lock:
+            rows = self.connection.execute(
+                """SELECT DISTINCT c.* FROM customers c
+                   JOIN orders o ON o.customer_id=c.customer_id
+                   ORDER BY c.customer_id"""
+            ).fetchall()
+        return [self._customer_dict(row) for row in rows]
+
+    @staticmethod
+    def _customer_dict(row):
+        return {
+            "customer_id": row["customer_id"],
+            **{field: row[field] for field in CUSTOMER_FIELDS},
+        }
+
+    @staticmethod
     def _product_dict(row):
         return {
             "sku": row["sku"],
@@ -130,9 +214,13 @@ class Database:
     def create_order(self, request, *, tax_rate_bps=0, discount_rates=None, shipping_charge_cents=0):
         if not isinstance(request, dict):
             raise ValueError("request must be an object")
-        customer = request.get("customer_name")
-        if not isinstance(customer, str) or not customer.strip():
+        customer_fields = self.normalize_customer(request["customer"]) if "customer" in request else None
+        customer_name = (
+            customer_fields["full_name"] if customer_fields is not None else request.get("customer_name")
+        )
+        if not isinstance(customer_name, str) or not customer_name.strip():
             raise ValueError("customer_name must be non-empty")
+        customer_name = customer_name.strip()
         if "shipped" in request and not isinstance(request["shipped"], bool):
             raise ValueError("shipped must be a boolean")
         items = request.get("items")
@@ -170,15 +258,24 @@ class Database:
                     amounts = line_amounts(product["unit_price_cents"], quantity, rate, tax_rate_bps)
                     snapshots.append((sku, quantity, product["unit_price_cents"], rate, amounts))
 
+                customer_id = None
+                if customer_fields is not None:
+                    columns = ", ".join(CUSTOMER_FIELDS)
+                    placeholders = ", ".join("?" for _ in CUSTOMER_FIELDS)
+                    cursor = self.connection.execute(
+                        f"INSERT INTO customers({columns}) VALUES({placeholders})",
+                        tuple(customer_fields[field] for field in CUSTOMER_FIELDS),
+                    )
+                    customer_id = cursor.lastrowid
                 subtotal = sum(line["subtotal"] for _, _, _, _, line in snapshots)
                 tax = sum(line["tax"] for _, _, _, _, line in snapshots)
                 total = subtotal + tax + shipping_charge_cents
                 created = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
                 cursor = self.connection.execute(
                     """INSERT INTO orders(customer_name,status,created_at,subtotal_cents,tax_rate_bps,
-                       tax_cents,shipping_cents,total_cents,amount_paid_cents,amount_refunded_cents,payment_status)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                    (customer, "pending", created, subtotal, tax_rate_bps, tax, shipping_charge_cents, total, 0, 0, "unpaid"),
+                       tax_cents,shipping_cents,total_cents,amount_paid_cents,amount_refunded_cents,payment_status,customer_id)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (customer_name, "pending", created, subtotal, tax_rate_bps, tax, shipping_charge_cents, total, 0, 0, "unpaid", customer_id),
                 )
                 order_id = cursor.lastrowid
                 for position, (sku, quantity, unit_price, rate, amounts) in enumerate(snapshots):

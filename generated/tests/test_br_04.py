@@ -199,7 +199,7 @@ class DesktopGuiTests(unittest.TestCase):
                 self.assertIn("View:", texts)
                 for label in ("Inventory", "Place Order", "Orders", "Submit order", "Refresh orders"):
                     self.assertIn(label, texts)
-                for label in ("Customer name", "Product SKU", "Quantity", "Shipped"):
+                for label in ("Full name", "Street number and name", "Phone number", "Product SKU", "Quantity", "Shipped"):
                     self.assertIn(label, texts)
                 self.assertNotIn("Refresh inventory", texts)
                 warning = next(widget for widget in FakeWidget.instances if widget.options.get("text") == "UNSECURED API  |  Use only with a trusted local endpoint")
@@ -249,6 +249,16 @@ class DesktopGuiTests(unittest.TestCase):
         app.quantity_entry = SimpleNamespace(get=lambda: "1")
         app.shipped_var = SimpleNamespace(get=lambda: False)
         app._product_skus = {"FIRST-SPROUT": "FIRST-SPROUT"}
+        app.customer_fields = {
+            "full_name": SimpleNamespace(get=lambda: "Ada"),
+            "street_address": SimpleNamespace(get=lambda: "12 Main"),
+            "city": SimpleNamespace(get=lambda: "Town"),
+            "state": SimpleNamespace(get=lambda: "CA"),
+            "postal_code": SimpleNamespace(get=lambda: "00123"),
+            "country": SimpleNamespace(get=lambda: "US"),
+            "phone_country_code": SimpleNamespace(get=lambda: "+1"),
+            "phone_number": SimpleNamespace(get=lambda: "555-0100"),
+        }
         app.status = FakeStatus()
         tasks = []
         sent = []
@@ -266,7 +276,16 @@ class DesktopGuiTests(unittest.TestCase):
                 operation()
         self.assertEqual(len(sent), 2)
         self.assertEqual(sent[0][2], {
-            "customer_name": "Ada",
+            "customer": {
+                "full_name": "Ada",
+                "street_address": "12 Main",
+                "city": "Town",
+                "state": "CA",
+                "postal_code": "00123",
+                "country": "US",
+                "phone_country_code": "+1",
+                "phone_number": "555-0100",
+            },
             "items": [{"product_sku": "FIRST-SPROUT", "quantity": 1}],
             "shipped": False,
         })

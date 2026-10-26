@@ -16,6 +16,13 @@ def api_base_url():
 
 
 def order_payload(customer_name, sku, quantity, shipped):
+    if isinstance(customer_name, dict):
+        customer = customer_name
+        return {
+            "customer": customer,
+            "items": [{"product_sku": sku, "quantity": int(quantity)}],
+            "shipped": bool(shipped),
+        }
     return {
         "customer_name": customer_name,
         "items": [{"product_sku": sku, "quantity": int(quantity)}],
@@ -53,7 +60,7 @@ class HCCApplication:
         self.base_url = (base_url or api_base_url()).rstrip("/")
         self._results = queue.Queue()
         self._closed = False
-        self._refresh_tokens = {"inventory": 0, "orders": 0}
+        self._refresh_tokens = {"inventory": 0, "orders": 0, "customers": 0}
         self._product_skus = {}
         self.root.title("Houseplant Correspondence Company")
         self.root.geometry("760x520")
@@ -64,7 +71,7 @@ class HCCApplication:
         navigation = ttk.Frame(container)
         navigation.pack(fill="x")
         ttk.Label(navigation, text="View:").pack(side="left", padx=(0, 8))
-        for title in ("Inventory", "Place Order", "Orders"):
+        for title in ("Inventory", "Place Order", "Orders", "Customers"):
             ttk.Button(navigation, text=title, command=lambda name=title: self.show_page(name)).pack(side="left", padx=3)
         self.warning = tk.Label(container, text=WARNING_TEXT, foreground="red")
         self.warning.pack(fill="x", pady=(8, 4))
@@ -73,6 +80,7 @@ class HCCApplication:
         self._build_inventory(container)
         self._build_place_order(container)
         self._build_orders(container)
+        self._build_customers(container)
         self.status = ttk.Label(container, text="Ready", anchor="w")
         self.status.pack(side="bottom", fill="x", pady=(8, 0))
         self.pages["Inventory"].pack(fill="both", expand=True)
@@ -101,19 +109,33 @@ class HCCApplication:
         self._heading(frame, "Place Order")
         form = ttk.Frame(frame)
         form.pack(anchor="nw")
-        ttk.Label(form, text="Customer name").grid(row=0, column=0, sticky="w", pady=5)
-        self.customer_entry = ttk.Entry(form, width=40)
-        self.customer_entry.grid(row=0, column=1, sticky="w", pady=5)
-        ttk.Label(form, text="Product SKU").grid(row=1, column=0, sticky="w", pady=5)
+        self.customer_fields = {}
+        customer_labels = (
+            ("full_name", "Full name"),
+            ("street_address", "Street number and name"),
+            ("city", "City"),
+            ("state", "State"),
+            ("postal_code", "Postal code"),
+            ("country", "Country"),
+            ("phone_country_code", "Phone country code"),
+            ("phone_number", "Phone number"),
+        )
+        for row, (field, label) in enumerate(customer_labels):
+            ttk.Label(form, text=label).grid(row=row, column=0, sticky="w", pady=2)
+            entry = ttk.Entry(form, width=40)
+            entry.grid(row=row, column=1, sticky="w", pady=2)
+            self.customer_fields[field] = entry
+        self.customer_entry = self.customer_fields["full_name"]
+        ttk.Label(form, text="Product SKU").grid(row=8, column=0, sticky="w", pady=3)
         self.product_choice = ttk.Combobox(form, state="readonly", width=37, values=())
-        self.product_choice.grid(row=1, column=1, sticky="w", pady=5)
-        ttk.Label(form, text="Quantity").grid(row=2, column=0, sticky="w", pady=5)
+        self.product_choice.grid(row=8, column=1, sticky="w", pady=3)
+        ttk.Label(form, text="Quantity").grid(row=9, column=0, sticky="w", pady=3)
         self.quantity_entry = ttk.Entry(form, width=10)
         self.quantity_entry.insert(0, "1")
-        self.quantity_entry.grid(row=2, column=1, sticky="w", pady=5)
+        self.quantity_entry.grid(row=9, column=1, sticky="w", pady=3)
         self.shipped_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(form, text="Shipped", variable=self.shipped_var).grid(row=3, column=1, sticky="w", pady=5)
-        ttk.Button(form, text="Submit order", command=self.submit_order).grid(row=4, column=1, sticky="w", pady=8)
+        ttk.Checkbutton(form, text="Shipped", variable=self.shipped_var).grid(row=10, column=1, sticky="w", pady=3)
+        ttk.Button(form, text="Submit order", command=self.submit_order).grid(row=11, column=1, sticky="w", pady=5)
 
     def _build_orders(self, parent):
         frame = ttk.Frame(parent)
@@ -129,6 +151,42 @@ class HCCApplication:
         self.order_list.pack(fill="both", expand=True)
         ttk.Button(frame, text="Refresh orders", command=self.refresh_orders).pack(anchor="e", pady=8)
 
+    def _build_customers(self, parent):
+        frame = ttk.Frame(parent)
+        self.pages["Customers"] = frame
+        self._heading(frame, "Customers")
+        form = ttk.Frame(frame)
+        form.pack(anchor="nw")
+        self.new_customer_fields = {}
+        customer_labels = (
+            ("full_name", "Full name"),
+            ("street_address", "Street number and name"),
+            ("city", "City"),
+            ("state", "State"),
+            ("postal_code", "Postal code"),
+            ("country", "Country"),
+            ("phone_country_code", "Phone country code"),
+            ("phone_number", "Phone number"),
+        )
+        for row, (field, label) in enumerate(customer_labels):
+            ttk.Label(form, text=label).grid(row=row, column=0, sticky="w", pady=1)
+            entry = ttk.Entry(form, width=38)
+            entry.grid(row=row, column=1, sticky="w", pady=1)
+            self.new_customer_fields[field] = entry
+        ttk.Button(form, text="Create Customer", command=self.create_customer).grid(
+            row=len(customer_labels), column=1, sticky="w", pady=5
+        )
+        self.customer_list = ttk.Treeview(
+            frame, columns=("name", "city", "country", "phone"), show="headings", height=6
+        )
+        for key, title, width in (
+            ("name", "Full name", 190), ("city", "City", 130),
+            ("country", "Country", 130), ("phone", "Phone", 170),
+        ):
+            self.customer_list.heading(key, text=title)
+            self.customer_list.column(key, width=width)
+        self.customer_list.pack(fill="both", expand=True, pady=(6, 0))
+
     def show_page(self, name):
         for frame in self.pages.values():
             frame.pack_forget()
@@ -137,6 +195,8 @@ class HCCApplication:
             self.refresh_inventory()
         elif name == "Orders":
             self.refresh_orders()
+        elif name == "Customers":
+            self.refresh_customers()
 
     def _submit_task(self, kind, operation, callback, token=None):
         self.status.configure(text="Request in progress...")
@@ -203,6 +263,41 @@ class HCCApplication:
 
         self._submit_task("orders", lambda: _request_json(self.base_url + "/orders"), apply, token)
 
+    def refresh_customers(self):
+        self._refresh_tokens["customers"] += 1
+        token = self._refresh_tokens["customers"]
+
+        def apply(customers):
+            for row in self.customer_list.get_children():
+                self.customer_list.delete(row)
+            for customer in customers:
+                self.customer_list.insert("", "end", values=(
+                    customer["full_name"], customer["city"], customer["country"], customer["phone_number"]
+                ))
+
+        self._submit_task(
+            "customers",
+            lambda: _request_json(self.base_url + "/customers/purchased"),
+            apply,
+            token,
+        )
+
+    def _customer_values(self, fields):
+        return {name: entry.get() for name, entry in fields.items()}
+
+    def create_customer(self):
+        customer = self._customer_values(self.new_customer_fields)
+
+        def apply(_created):
+            self.status.configure(text="Customer created")
+            self.refresh_customers()
+
+        self._submit_task(
+            "customer_create",
+            lambda: _request_json(self.base_url + "/customers", "POST", customer),
+            apply,
+        )
+
     def submit_order(self):
         selected = self.product_choice.get()
         sku = self._product_skus.get(selected)
@@ -211,7 +306,7 @@ class HCCApplication:
             return
         try:
             payload = order_payload(
-                self.customer_entry.get(), sku,
+                self._customer_values(self.customer_fields), sku,
                 self.quantity_entry.get(), self.shipped_var.get()
             )
         except (TypeError, ValueError):
