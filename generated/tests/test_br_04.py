@@ -223,7 +223,7 @@ class DesktopGuiTests(unittest.TestCase):
                         time.sleep(0.005)
                     HCCApplication._drain_results(app)
                 self.assertEqual(app.inventory.children, [("FIRST-SPROUT", "First Sprout Card Pack", "12.50", 100)])
-                self.assertEqual(app.product_choice.options["values"], ["FIRST-SPROUT"])
+                self.assertEqual(app.product_choice.options["values"], ["First Sprout Card Pack (FIRST-SPROUT)"])
                 order = {"order_id": 1, "customer_name": "Ada", "status": "pending", "total": "12.50"}
                 with patch("generated.gui._request_json", return_value=[order]):
                     app.refresh_orders()
@@ -248,6 +248,7 @@ class DesktopGuiTests(unittest.TestCase):
         app.product_choice = SimpleNamespace(get=lambda: "FIRST-SPROUT")
         app.quantity_entry = SimpleNamespace(get=lambda: "1")
         app.shipped_var = SimpleNamespace(get=lambda: False)
+        app._product_skus = {"FIRST-SPROUT": "FIRST-SPROUT"}
         app.status = FakeStatus()
         tasks = []
         sent = []

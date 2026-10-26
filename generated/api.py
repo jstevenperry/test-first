@@ -7,9 +7,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
 
 if __package__ in (None, ""):
-    from database import Database
+    from database import Database, OrderNotShippable
 else:
-    from generated.database import Database
+    from generated.database import Database, OrderNotShippable
 
 
 LOGGER = logging.getLogger("hcc.api")
@@ -52,6 +52,9 @@ def make_server(host="127.0.0.1", port=8000, database=None):
             match = re.fullmatch(r"/orders/([^/]+)", path)
             if match:
                 return "/orders/{id}", match.group(1)
+            match = re.fullmatch(r"/orders/([^/]+)/ship", path)
+            if match:
+                return "/orders/{id}/ship", match.group(1)
             return None, None
 
         def _read_json(self):
@@ -90,6 +93,19 @@ def make_server(host="127.0.0.1", port=8000, database=None):
                     self._error(404, "Order not found")
                 else:
                     self._json(200, order)
+            elif route == "/orders/{id}/ship" and self.command == "POST":
+                if not re.fullmatch(r"[0-9]+", parameter):
+                    self._error(400, "order ID must be an integer")
+                    return
+                try:
+                    order = db.ship_order(int(parameter))
+                except LookupError as exc:
+                    self._error(404, str(exc))
+                    return
+                except OrderNotShippable as exc:
+                    self._error(409, str(exc))
+                    return
+                self._json(200, order)
             elif route == "/orders" and self.command == "POST":
                 try:
                     request = self._read_json()
@@ -105,7 +121,13 @@ def make_server(host="127.0.0.1", port=8000, database=None):
                     return
                 self._json(201, order)
             else:
-                allow = "GET" if route != "/orders" else ("GET, POST" if self.command not in ("GET", "POST") else "GET")
+                allow = {
+                    "/products": "GET",
+                    "/products/{sku}": "GET",
+                    "/orders": "GET, POST",
+                    "/orders/{id}": "GET",
+                    "/orders/{id}/ship": "POST",
+                }[route]
                 self._error(405, "Method not allowed", allow)
 
         def _handle(self):

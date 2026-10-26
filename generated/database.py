@@ -15,6 +15,10 @@ SEED_PRODUCTS = (
 )
 
 
+class OrderNotShippable(Exception):
+    pass
+
+
 def _positive_quantity(value):
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError("quantity must be a positive whole number")
@@ -206,6 +210,30 @@ class Database:
         with self._lock:
             ids = [r["order_id"] for r in self.connection.execute("SELECT order_id FROM orders ORDER BY order_id")]
         return [self.get_order(order_id) for order_id in ids]
+
+    def ship_order(self, order_id):
+        with self._lock:
+            try:
+                self.connection.execute("BEGIN IMMEDIATE")
+                order = self.connection.execute(
+                    "SELECT status, total_cents, amount_paid_cents FROM orders WHERE order_id=?",
+                    (order_id,),
+                ).fetchone()
+                if order is None or order["status"] == "shipped":
+                    raise LookupError("Pending order not found")
+                if order["status"] != "pending" or order["amount_paid_cents"] < order["total_cents"]:
+                    raise OrderNotShippable("Order must be pending and fully paid before shipping")
+                cursor = self.connection.execute(
+                    "UPDATE orders SET status='shipped' WHERE order_id=? AND status='pending'",
+                    (order_id,),
+                )
+                if cursor.rowcount != 1:
+                    raise OrderNotShippable("Order must be pending and fully paid before shipping")
+                self.connection.commit()
+            except Exception:
+                self.connection.rollback()
+                raise
+        return self.get_order(order_id)
 
     @staticmethod
     def _order_dict(row, items):

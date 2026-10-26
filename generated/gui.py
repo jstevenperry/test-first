@@ -54,6 +54,7 @@ class HCCApplication:
         self._results = queue.Queue()
         self._closed = False
         self._refresh_tokens = {"inventory": 0, "orders": 0}
+        self._product_skus = {}
         self.root.title("Houseplant Correspondence Company")
         self.root.geometry("760x520")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -177,9 +178,14 @@ class HCCApplication:
                 self.inventory.insert("", "end", values=(
                     product["sku"], product["name"], product["unit_price"], product["stock_quantity"]
                 ))
-            self.product_choice.configure(values=[product["sku"] for product in products])
-            if products and not self.product_choice.get():
-                self.product_choice.set(products[0]["sku"])
+            previous_selection = self.product_choice.get()
+            self._product_skus = {
+                f"{product['name']} ({product['sku']})": product["sku"]
+                for product in products
+            }
+            choices = list(self._product_skus)
+            self.product_choice.configure(values=choices)
+            self.product_choice.set(previous_selection if previous_selection in self._product_skus else "")
 
         self._submit_task("inventory", lambda: _request_json(self.base_url + "/products"), apply, token)
 
@@ -198,9 +204,14 @@ class HCCApplication:
         self._submit_task("orders", lambda: _request_json(self.base_url + "/orders"), apply, token)
 
     def submit_order(self):
+        selected = self.product_choice.get()
+        sku = self._product_skus.get(selected)
+        if not sku:
+            self.status.configure(text="Select a product before submitting an order")
+            return
         try:
             payload = order_payload(
-                self.customer_entry.get(), self.product_choice.get(),
+                self.customer_entry.get(), sku,
                 self.quantity_entry.get(), self.shipped_var.get()
             )
         except (TypeError, ValueError):
