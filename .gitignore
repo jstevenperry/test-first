@@ -130,8 +130,8 @@ cython_debug/
 
 # VS Code
 .vscode/
-# Ignore local scratch work and generated application files.
+# Ignore local scratch work and generated runtime data.
 /scratch_files/*
-/generated/*
+#/generated/*
 
 *.sqlite3
