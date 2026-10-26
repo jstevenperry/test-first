@@ -3,7 +3,7 @@
 ## Input(s):
 
 * test-first/src/spec/no-code-business-requirements.md
-* test-first/generated/spec/sprint-2-execution-plan.md
+* test-first/generated/spec/sprint-3-execution-plan.md
 
 ## Sprint
 
